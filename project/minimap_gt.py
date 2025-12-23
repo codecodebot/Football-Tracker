@@ -1,57 +1,93 @@
-"""Extract ground-truth player positions from the minimap."""
+"""Projection utilities for mapping minimap coordinates to a field map."""
 
-from typing import List, Tuple
+from typing import Tuple, List
 
 import cv2
 import numpy as np
 
 
-def extract_minimap_points(
-    frame: np.ndarray,
-    minimap_roi: Tuple[int, int, int, int],
-    hsv_lower: Tuple[int, int, int],
-    hsv_upper: Tuple[int, int, int],
-) -> List[Tuple[float, float]]:
+def create_field_map(width: int, height: int) -> np.ndarray:
     """
-    Extract player positions from the in-game minimap using HSV thresholding.
+    Create a simple top-down soccer field visualization.
 
     Args:
-        frame: Full BGR frame.
-        minimap_roi: (x, y, w, h) region of the minimap in the frame.
-        hsv_lower: Lower HSV bound for player dots.
-        hsv_upper: Upper HSV bound for player dots.
+        width: Field map width.
+        height: Field map height.
 
     Returns:
-        List of (x, y) coordinates in minimap-local space.
+        BGR image of the field map.
     """
-    x, y, w, h = minimap_roi
-    minimap = frame[y : y + h, x : x + w]
+    field = np.zeros((height, width, 3), dtype=np.uint8)
+    field[:, :] = (30, 120, 30)
 
-    if minimap.size == 0:
-        return []
-
-    hsv = cv2.cvtColor(minimap, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, hsv_lower, hsv_upper)
-
-    # Noise reduction
-    mask = cv2.medianBlur(mask, 5)
-
-    contours, _ = cv2.findContours(
-        mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    # Outer boundary
+    cv2.rectangle(
+        field,
+        (5, 5),
+        (width - 5, height - 5),
+        (255, 255, 255),
+        2,
     )
 
-    points: List[Tuple[float, float]] = []
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < 4:
-            continue
+    # Center line
+    cv2.line(
+        field,
+        (width // 2, 5),
+        (width // 2, height - 5),
+        (255, 255, 255),
+        2,
+    )
 
-        m = cv2.moments(contour)
-        if m["m00"] == 0:
-            continue
+    return field
 
-        cx = float(m["m10"] / m["m00"])
-        cy = float(m["m01"] / m["m00"])
-        points.append((cx, cy))
 
-    return points
+def compute_homography(
+    minimap_size: Tuple[int, int],
+    field_size: Tuple[int, int],
+) -> np.ndarray:
+    """
+    Compute homography mapping minimap coordinates to field-map coordinates.
+
+    Args:
+        minimap_size: (width, height) of the minimap.
+        field_size: (width, height) of the field map.
+
+    Returns:
+        3x3 homography matrix.
+    """
+    w, h = minimap_size
+    fw, fh = field_size
+
+    src = np.array(
+        [[0, 0], [w, 0], [w, h], [0, h]],
+        dtype=np.float32,
+    )
+    dst = np.array(
+        [[0, 0], [fw, 0], [fw, fh], [0, fh]],
+        dtype=np.float32,
+    )
+
+    H, _ = cv2.findHomography(src, dst)
+    return H
+
+
+def project_points(
+    points: List[Tuple[float, float]],
+    homography: np.ndarray,
+) -> np.ndarray:
+    """
+    Project minimap points onto the field map using a homography.
+
+    Args:
+        points: List of (x, y) minimap coordinates.
+        homography: 3x3 homography matrix.
+
+    Returns:
+        Array of projected points with shape (N, 2).
+    """
+    if len(points) == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+
+    pts = np.array(points, dtype=np.float32).reshape(-1, 1, 2)
+    projected = cv2.perspectiveTransform(pts, homography)
+    return projected.reshape(-1, 2)

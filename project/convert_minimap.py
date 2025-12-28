@@ -3,13 +3,16 @@ import numpy as np
 from typing import List, Tuple
 
 
-# ===== 기준 색 (BGR) =====
-RED_INNER_BGR  = np.array([55, 40, 165])
-BLUE_INNER_BGR = np.array([51, 46, 135])
-BALL_BGR       = np.array([53, 189, 234])
+# ===== HSV 기준 =====
+BLUE_HUE_CENTER = 110   # 파랑 중심
+RED_HUE_CENTER_1 = 0
+RED_HUE_CENTER_2 = 179
 
 MIN_RING_AREA = 5
-INNER_COLOR_THRESH = 80
+
+
+# ===== 공 (노란색, BGR) =====
+BALL_BGR = np.array([53, 189, 234])
 
 
 def color_distance(img: np.ndarray, color: np.ndarray) -> np.ndarray:
@@ -59,16 +62,22 @@ def extract_ring_centers(minimap: np.ndarray) -> List[Tuple[int, int]]:
     return centers
 
 
-# ===== 2. 링 내부 색 샘플링 =====
-def sample_inner_color(minimap: np.ndarray, cx: int, cy: int) -> np.ndarray:
+# ===== 2. 링 내부 HSV 샘플 =====
+def sample_inner_hsv(minimap: np.ndarray, cx: int, cy: int) -> np.ndarray:
     h, w = minimap.shape[:2]
     r = 2
 
     x1, x2 = max(0, cx - r), min(w, cx + r + 1)
     y1, y2 = max(0, cy - r), min(h, cy + r + 1)
 
-    patch = minimap[y1:y2, x1:x2].astype(np.int16)
-    return patch.reshape(-1, 3).mean(axis=0)
+    patch = minimap[y1:y2, x1:x2]
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+
+    return hsv.reshape(-1, 3).mean(axis=0)
+
+
+def hue_distance(h, center):
+    return min(abs(h - center), 180 - abs(h - center))
 
 
 # ===== 3. 공: 가장 노란 픽셀 =====
@@ -81,31 +90,33 @@ def extract_ball_position(minimap: np.ndarray) -> Tuple[int, int]:
 # ===== 4. 메인 로직 =====
 def extract_minimap_entities(minimap: np.ndarray) -> dict:
     ball = extract_ball_position(minimap)
-
     ring_centers = extract_ring_centers(minimap)
 
-    red_scores = []
     blue_scores = []
+    red_scores = []
 
     for cx, cy in ring_centers:
-        mean_color = sample_inner_color(minimap, cx, cy)
+        h, s, v = sample_inner_hsv(minimap, cx, cy)
 
-        d_red = np.linalg.norm(mean_color - RED_INNER_BGR)
-        d_blue = np.linalg.norm(mean_color - BLUE_INNER_BGR)
+        d_blue = hue_distance(h, BLUE_HUE_CENTER)
+        d_red = min(
+            hue_distance(h, RED_HUE_CENTER_1),
+            hue_distance(h, RED_HUE_CENTER_2),
+        )
 
-        red_scores.append(((cx, cy), d_red))
         blue_scores.append(((cx, cy), d_blue))
+        red_scores.append(((cx, cy), d_red))
 
-    red_scores.sort(key=lambda x: x[1])
     blue_scores.sort(key=lambda x: x[1])
+    red_scores.sort(key=lambda x: x[1])
 
-    red = [p for p, _ in red_scores[:11]]
     blue = [p for p, _ in blue_scores[:11]]
+    red = [p for p, _ in red_scores[:11]]
 
     nr, nb = len(red), len(blue)
     total = nr + nb + 1
 
-    # ===== 겹침 보정 로직 =====
+    # ===== 겹침 보정 =====
     if total == 22:
         if nr == 10:
             red.append(ball)

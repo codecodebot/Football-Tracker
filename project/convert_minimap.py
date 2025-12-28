@@ -7,7 +7,7 @@ RED_BGR  = np.array([55, 40, 165])
 BLUE_BGR = np.array([51, 46, 135])
 BALL_BGR = np.array([53, 189, 234])
 
-PLAYER_COLOR_THRESH = 10
+PLAYER_COLOR_THRESH = 30
 MIN_MARKER_AREA = 12
 
 
